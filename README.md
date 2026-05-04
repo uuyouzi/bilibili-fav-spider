@@ -103,11 +103,20 @@ cd .. && ./bin/bili-downloader.exe
 
 ### 第三步：登录 B站
 
-**推荐方式：扫码登录** ✨
+**方式一：扫码登录** ✨
 
 把 `config.yaml` 中的 `cookie` 留空即可，启动程序时会自动打开浏览器展示二维码，用手机 B站 App 扫码确认即完成登录。
 
-**备用方式：手动获取 Cookie**
+**方式二：UID 模式（无需登录，抓公开收藏夹）** 🔓
+
+如果只想抓取某个用户的**公开收藏夹**，填 `uid` 即可，不需要 Cookie 也不需要登录：
+
+```yaml
+cookie: ""
+uid: "用户B站UID"    # 在用户主页 URL 中找，如 space.bilibili.com/123456
+```
+
+**方式三：手动获取 Cookie**
 
 如果需要手动配置 Cookie：
 
@@ -308,7 +317,8 @@ C:/Users/你的用户名/AppData/Local/Programs/yt-dlp/yt-dlp.exe --version
 
 | 配置项 | 类型 | 默认值 | 说明 |
 |--------|------|--------|------|
-| `cookie` | 字符串 | 可选 | B站登录 Cookie（留空则启动时扫码登录） |
+| `cookie` | 字符串 | 可选 | B站登录 Cookie（留空则扫码登录，或填 uid 抓公开收藏夹） |
+| `uid` | 字符串 | 可选 | 目标用户 B站 UID（填了就不需要 Cookie，抓公开收藏夹） |
 | `save_path` | 字符串 | **必填** | 视频保存根目录 |
 | `start_date` | 字符串 | **必填** | 起始日期，格式 `YYYY-MM-DD` |
 | `check_interval_minutes` | 整数 | `30` | 检查间隔（分钟） |
@@ -378,6 +388,28 @@ D:/B站视频/
     └── ...
 ```
 
+**UID 模式**（抓取公开收藏夹时，自动按 UID 分目录）：
+
+```yaml
+cookie: ""
+uid: "123456"
+save_path: "D:/B站视频"
+favorite_folders: true
+```
+
+```
+D:/B站视频/
+└── 123456/               ← 自动按 UID 分目录
+    ├── AI/
+    │   └── UP主A/
+    │       └── 视频标题.txt
+    ├── 音乐/
+    │   └── UP主B/
+    │       └── 视频标题.txt
+    └── 默认收藏夹/
+        └── ...
+```
+
 ### 配置示例
 
 #### 场景1：日常使用（默认配置）
@@ -426,6 +458,19 @@ monitored_favorites: []
 check_interval_minutes: 120     # 间隔2小时
 max_concurrent_downloads: 1     # 只下载1个
 download_timeout_seconds: 10800 # 超时3小时
+```
+
+#### 场景5：抓取别人公开收藏夹（无需登录）
+
+```yaml
+cookie: ""                        # 不填
+uid: "123456"                     # 目标用户 B站 UID
+save_path: "D:/B站视频"
+start_date: "2025-01-01"
+download_mode: "metadata"         # 推荐元数据模式，不下载视频
+favorite_folders: true
+monitored_favorites: []          # 监控所有公开收藏夹
+# 保存路径自动变为: D:/B站视频/123456/...（按 UID 分目录）
 ```
 
 ### 关于 `start_date` 的说明
@@ -544,6 +589,15 @@ monitored_favorites:
 ```bash
 ./bin/bili-downloader.exe --stats
 ```
+
+### Q12: 如何不登录抓取别人的公开收藏夹？
+
+**A**: 在 `config.yaml` 中填写目标用户的 `uid` 即可，无需 Cookie：
+```yaml
+cookie: ""
+uid: "123456"    # 目标用户的 B站 UID
+```
+UID 可以在用户 B站个人主页 URL 中找到（如 `space.bilibili.com/123456`）。
 
 ### Q11: 程序支持 Linux/macOS 吗？
 
