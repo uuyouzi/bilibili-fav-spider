@@ -207,7 +207,7 @@ func (m *Monitor) syncFavorites() error {
 // downloadPending 下载待下载的视频
 func (m *Monitor) downloadPending() {
 	// 获取待下载的视频
-	videos, err := m.storage.GetPendingVideos(100) // 每次最多处理100个
+	videos, err := m.storage.GetPendingVideos(0) // 0 = 不限制数量
 	if err != nil {
 		log.Printf("获取待下载视频失败: %v", err)
 		return

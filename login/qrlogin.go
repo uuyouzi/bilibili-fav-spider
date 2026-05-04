@@ -222,3 +222,4 @@ func parseLoginCookie(callbackURL string) (string, error) {
 
 	return strings.Join(cookies, "; "), nil
 }
+

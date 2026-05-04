@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/pkg/browser"
 	qrcode "github.com/skip2/go-qrcode"
+	"github.com/pkg/browser"
 )
 
 // DisplayQRCode 在浏览器中展示二维码

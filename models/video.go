@@ -10,10 +10,10 @@ import (
 type VideoStatus string
 
 const (
-	StatusPending    VideoStatus = "pending"    // 待下载
+	StatusPending   VideoStatus = "pending"    // 待下载
 	StatusDownloaded VideoStatus = "downloaded" // 已下载
-	StatusFailed     VideoStatus = "failed"     // 下载失败
-	StatusExpired    VideoStatus = "expired"    // 已失效（被下架）
+	StatusFailed    VideoStatus = "failed"    // 下载失败
+	StatusExpired   VideoStatus = "expired"   // 已失效（被下架）
 )
 
 // Video 视频数据模型
@@ -22,7 +22,7 @@ type Video struct {
 	ID            int64       `json:"id"`             // 数据库自增ID
 	Bvid          string      `json:"bvid"`           // B站视频的唯一标识符（如 BV1xx4y1d7z9）
 	Title         string      `json:"title"`          // 视频标题
-	Desc          string      `json:"desc"`           // 视频简介
+	Desc         string      `json:"desc"`           // 视频简介
 	Author        string      `json:"author"`         // UP主名称
 	AuthorMid     string      `json:"author_mid"`     // UP主mid
 	Duration      int         `json:"duration"`       // 视频时长（秒）
@@ -80,9 +80,12 @@ type Favorite struct {
 // 用于从 config.yaml 文件中读取配置
 type Config struct {
 	// Cookie B站登录后的 Cookie（可选，不填则启动时自动扫码登录）
-	// 可以通过浏览器开发者工具获取，需要包含 SESSDATA 字段
-	// 获取方法见 README.md
+	// 如果同时设置了 uid，则使用 uid 模式（抓取公开收藏夹，无需登录）
 	Cookie string `yaml:"cookie"`
+
+	// UID 目标用户的 B站 UID（可选，填了就不需要 Cookie）
+	// 抓取该用户公开可见的收藏夹，无需登录
+	UID string `yaml:"uid"`
 
 	// SavePath 视频保存路径
 	// 程序会在此路径下创建子文件夹按 收藏夹/UP主 分类存储视频
@@ -150,16 +153,16 @@ func BoolPtr(b bool) *bool {
 // 当用户没有提供 config.yaml 时使用这些默认值
 func DefaultConfig() *Config {
 	return &Config{
-		Cookie:                 "",
-		SavePath:               "./downloads",
-		StartDate:              "2000-01-01",
-		CheckIntervalMinutes:   30,
-		MaxConcurrentDownloads: 1,
-		DownloadQuality:        "bestvideo+bestaudio",
-		EnableNotification:     true,
-		DownloadTimeout:        3600,          // 默认1小时超时
-		FavoriteFolders:        BoolPtr(true), // 默认按收藏夹分类
-		MonitoredFavorites:     []string{},    // 空表示监控所有收藏夹
-		DownloadMode:           "video",       // 默认下载完整视频
+		Cookie:                   "",
+		SavePath:                 "./downloads",
+		StartDate:                "2000-01-01",
+		CheckIntervalMinutes:     30,
+		MaxConcurrentDownloads:   1,
+		DownloadQuality:          "bestvideo+bestaudio",
+		EnableNotification:       true,
+		DownloadTimeout:          3600, // 默认1小时超时
+		FavoriteFolders:         BoolPtr(true), // 默认按收藏夹分类
+		MonitoredFavorites:       []string{},   // 空表示监控所有收藏夹
+		DownloadMode:             "video",       // 默认下载完整视频
 	}
 }
