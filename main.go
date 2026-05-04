@@ -3,9 +3,11 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	"bili-downloader/api"
@@ -22,6 +24,13 @@ const Version = "1.0.0"
 func main() {
 	// 打印欢迎信息
 	printBanner()
+
+	// 设置日志文件（同时输出到控制台和文件）
+	logFile, err := os.OpenFile("bili-downloader.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err == nil {
+		log.SetOutput(io.MultiWriter(os.Stdout, logFile))
+		defer logFile.Close()
+	}
 
 	// 解析命令行参数
 	configPath := flag.String("config", "", "配置文件路径（默认为当前目录下的 config.yaml）")
@@ -51,8 +60,8 @@ func main() {
 	defer store.Close()
 	log.Println("数据库初始化成功!")
 
-	// 4. 如果未配置 Cookie，启动扫码登录
-	if cfg.Cookie == "" {
+	// 4. 如果未配置 Cookie 且未配置 UID，启动扫码登录
+	if cfg.Cookie == "" && cfg.UID == "" {
 		result, err := login.StartQRLogin()
 		if err != nil {
 			log.Fatalf("扫码登录失败: %v", err)
@@ -62,21 +71,30 @@ func main() {
 	}
 
 	// 5. 创建 B站 API 客户端
-	biliAPI := api.NewBilibiliClient(cfg.Cookie)
+	biliAPI := api.NewBilibiliClient(cfg.Cookie, cfg.UID)
 
-	// 6. 验证 Cookie 是否有效
-	log.Println("正在验证 Cookie...")
-	if err := biliAPI.ValidateCookie(); err != nil {
-		log.Fatalf("Cookie 验证失败: %v", err)
+	// 6. 验证 Cookie 是否有效（UID 模式下跳过）
+	if cfg.UID != "" {
+		log.Println("UID 模式，跳过 Cookie 验证")
+	} else {
+		log.Println("正在验证 Cookie...")
+		if err := biliAPI.ValidateCookie(); err != nil {
+			log.Fatalf("Cookie 验证失败: %v", err)
+		}
 	}
 
-	// 7. 创建下载器
+	// 7. 创建下载器（UID 模式下按 UID 分目录）
+	savePath := cfg.SavePath
+	if cfg.UID != "" {
+		savePath = filepath.Join(savePath, cfg.UID)
+		log.Printf("UID 模式，保存到: %s", savePath)
+	}
 	dlConfig := &downloader.Config{
-		SavePath:           cfg.SavePath,
-		Quality:            cfg.DownloadQuality,
-		Timeout:            cfg.DownloadTimeout,
-		MaxRetries:         3,
-		EnableNotification: cfg.EnableNotification,
+		SavePath:            savePath,
+		Quality:             cfg.DownloadQuality,
+		Timeout:             cfg.DownloadTimeout,
+		MaxRetries:          3,
+		EnableNotification:  cfg.EnableNotification,
 	}
 	dl := downloader.New(dlConfig)
 
