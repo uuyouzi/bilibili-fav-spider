@@ -33,16 +33,17 @@ const (
 
 // BilibiliClient B站 API 客户端
 type BilibiliClient struct {
-	Cookie     string       // 登录 Cookie（必须包含 SESSDATA）
-	HTTPClient *http.Client // HTTP 客户端
+	Cookie     string        // 登录 Cookie
+	UID        string        // 目标用户 UID（可选，用于公开收藏夹）
+	HTTPClient *http.Client  // HTTP 客户端
 }
 
 // NewBilibiliClient 创建 B站 API 客户端
-func NewBilibiliClient(cookie string) *BilibiliClient {
+func NewBilibiliClient(cookie, uid string) *BilibiliClient {
 	return &BilibiliClient{
 		Cookie: cookie,
+		UID:    uid,
 		HTTPClient: &http.Client{
-			// 设置超时时间
 			Timeout: 30 * time.Second,
 		},
 	}
@@ -53,32 +54,30 @@ func NewBilibiliClient(cookie string) *BilibiliClient {
 type FavoriteListResponse struct {
 	Code    int    `json:"code"`    // 0=成功，其他=失败
 	Message string `json:"message"` // 错误信息
-	TTL     int    `json:"ttl"`     // TTL
+	TTL     int    `json:"ttl"`    // TTL
 	Data    struct {
 		List []struct {
 			Id         int64  `json:"id"`          // 收藏夹ID
-			Title      string `json:"title"`       // 收藏夹标题
-			MediaCount int    `json:"media_count"` // 收藏夹内视频数量
+			Title      string `json:"title"`        // 收藏夹标题
+			MediaCount int    `json:"media_count"`  // 收藏夹内视频数量
 		} `json:"list"` // 收藏夹列表
 	} `json:"data"`
 }
 
-// FavoriteVideosResponse 收藏夹内视频列表 API 响应结构
+// FavoriteVideosResponse 收藏夹内视频列表 API 响应结构（新接口 x/v3/fav/resource/list）
 type FavoriteVideosResponse struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
-	TTL     int    `json:"ttl"`
 	Data    struct {
-		HasMore int `json:"has_more"`
-		MaxId   int `json:"max_id"`
-		List    []struct {
+		HasMore bool `json:"has_more"`
+		Medias  []struct {
 			Id           int64  `json:"id"`
-			Bvid         string `json:"bvid"`        // 视频BV号
-			Title        string `json:"title"`       // 视频标题
-			Description  string `json:"description"` // 视频简介
-			Duration     int    `json:"duration"`    // 视频时长（秒）
-			PubDate      int64  `json:"pubdate"`     // 发布时间（Unix时间戳）
-			FavoriteTime int64  `json:"fav_time"`    // 收藏时间（Unix时间戳）
+			Bvid         string `json:"bvid"`          // 视频BV号
+			Title        string `json:"title"`         // 视频标题
+			Intro        string `json:"intro"`         // 视频简介
+			Duration     int    `json:"duration"`       // 视频时长（秒）
+			PubTime      int64  `json:"pubtime"`       // 发布时间（Unix时间戳）
+			FavoriteTime int64  `json:"fav_time"`      // 收藏时间（Unix时间戳）
 			Upper        struct {
 				Mid  int64  `json:"mid"`  // UP主mid
 				Name string `json:"name"` // UP主名称
@@ -86,7 +85,7 @@ type FavoriteVideosResponse struct {
 			// attr 字段：标记视频状态
 			// attr & 2 != 0 表示视频已失效（被删除/下架）
 			Attr int `json:"attr"`
-		} `json:"list"`
+		} `json:"medias"`
 	} `json:"data"`
 }
 
@@ -97,14 +96,22 @@ func (c *BilibiliClient) GetFavoriteList() ([]struct {
 	Title      string
 	MediaCount int
 }, error) {
-	// 先获取用户 mid（新版 API 需要 up_mid 参数）
-	mid, err := c.getUserMid()
-	if err != nil {
-		return nil, fmt.Errorf("获取用户信息失败: %w", err)
+	// 获取用户 mid：优先使用配置的 UID，否则从登录态获取
+	var mid int64
+	if c.UID != "" {
+		var err error
+		mid, err = strconv.ParseInt(c.UID, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("UID 格式错误: %w", err)
+		}
+	} else {
+		var err error
+		mid, err = c.getUserMid()
+		if err != nil {
+			return nil, fmt.Errorf("获取用户信息失败: %w", err)
+		}
 	}
 
-	// 构建 API 请求 URL
-	// 新版 API 一次返回所有收藏夹，无需分页
 	reqURL := fmt.Sprintf("%s?up_mid=%d", FavoriteListAPI, mid)
 
 	// 发起 GET 请求
@@ -169,8 +176,8 @@ func (c *BilibiliClient) getUserMid() (int64, error) {
 		Code    int    `json:"code"`
 		Message string `json:"message"`
 		Data    struct {
-			Mid     int64 `json:"mid"`
-			IsLogin bool  `json:"isLogin"`
+			Mid     int64  `json:"mid"`
+			IsLogin bool   `json:"isLogin"`
 		} `json:"data"`
 	}
 
@@ -194,83 +201,82 @@ func (c *BilibiliClient) GetFavoriteVideos(mediaId int64, favoriteTitle string) 
 	page := 1
 	const pageSize = 20
 
-	// 分页获取所有视频
-	// max_id 存储上一页返回的游标，用于下一页请求（游标分页比页码分页更可靠）
-	var maxId int64
 	for {
-		// 构建 API 请求 URL
 		reqURL := fmt.Sprintf(
-			"https://api.bilibili.com/medialist/v2/media/tab?id=%d&pn=%d&ps=%d",
+			"https://api.bilibili.com/x/v3/fav/resource/list?media_id=%d&pn=%d&ps=%d&platform=web",
 			mediaId, page, pageSize,
 		)
-		// 从第2页开始需要传递 max_id 游标
-		if maxId > 0 {
-			reqURL += fmt.Sprintf("&max_id=%d", maxId)
+
+		// 带重试：B站限流时会返回非JSON，等几秒重试
+		var result *FavoriteVideosResponse
+		var lastErr error
+		for retry := 0; retry < 3; retry++ {
+			if retry > 0 {
+				backoff := time.Duration(retry) * 3 * time.Second
+				log.Printf("请求被限流，重试第 %d 次（等待 %v）...", retry, backoff)
+				time.Sleep(backoff)
+			}
+
+			resp, err := c.doRequest("GET", reqURL, nil)
+			if err != nil {
+				lastErr = err
+				continue
+			}
+
+			body, err := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if err != nil {
+				lastErr = err
+				continue
+			}
+
+			var r FavoriteVideosResponse
+			if err := json.Unmarshal(body, &r); err != nil {
+				lastErr = fmt.Errorf("非JSON响应(HTTP %d)", resp.StatusCode)
+				continue
+			}
+
+			if r.Code != 0 {
+				return nil, fmt.Errorf("B站 API 返回错误: %s (code=%d)", r.Message, r.Code)
+			}
+
+			result = &r
+			break
 		}
 
-		// 发起请求
-		resp, err := c.doRequest("GET", reqURL, nil)
-		if err != nil {
-			return nil, fmt.Errorf("获取收藏夹视频失败(第%d页): %w", page, err)
+		if result == nil {
+			return nil, fmt.Errorf("请求失败(第%d页，重试3次): %w", page, lastErr)
 		}
 
-		// 立即读取响应体并关闭，避免在循环中使用 defer 导致连接泄漏
-		body, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if err != nil {
-			return nil, fmt.Errorf("读取响应失败: %w", err)
-		}
-
-		// 解析 JSON
-		var result FavoriteVideosResponse
-		if err := json.Unmarshal(body, &result); err != nil {
-			return nil, fmt.Errorf("解析视频列表失败: %w", err)
-		}
-
-		// 检查 API 返回码
-		if result.Code != 0 {
-			return nil, fmt.Errorf("B站 API 返回错误: %s (code=%d)", result.Message, result.Code)
-		}
-
-		// 转换为本地的 Video 结构
-		for _, item := range result.Data.List {
+		for _, item := range result.Data.Medias {
 			video := &models.Video{
 				Bvid:          item.Bvid,
 				Title:         item.Title,
-				Desc:          item.Description,
+				Desc:          item.Intro,
 				Author:        item.Upper.Name,
 				AuthorMid:     strconv.FormatInt(item.Upper.Mid, 10),
 				Duration:      item.Duration,
-				PubDate:       time.Unix(item.PubDate, 0),
+				PubDate:       time.Unix(item.PubTime, 0),
 				FavoriteTime:  time.Unix(item.FavoriteTime, 0),
 				FavoriteId:    mediaId,
 				FavoriteTitle: favoriteTitle,
 				Status:        models.StatusPending,
 				Retries:       0,
 			}
-
-			// 检查视频是否已失效
-			// attr & 2 != 0 表示视频已失效
 			if item.Attr&2 != 0 {
 				video.Status = models.StatusExpired
 			}
-
 			allVideos = append(allVideos, video)
 		}
 
 		log.Printf("已获取第 %d 页，共 %d 个视频...", page, len(allVideos))
 
-		// 如果没有更多视频，退出循环
-		if result.Data.HasMore == 0 {
+		if !result.Data.HasMore {
 			break
 		}
 
-		// 保存游标用于下一页请求
-		maxId = int64(result.Data.MaxId)
 		page++
-
-		// 添加延迟，避免请求过快触发风控
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(1 * time.Second)
 	}
 
 	return allVideos, nil
@@ -363,7 +369,7 @@ func (c *BilibiliClient) GetVideoInfo(bvid string) (*models.Video, error) {
 		Code    int    `json:"code"`
 		Message string `json:"message"`
 		Data    struct {
-			Bvid     string `json:"bvid"`
+			Bvid      string `json:"bvid"`
 			Title    string `json:"title"`
 			Desc     string `json:"desc"`
 			Duration int    `json:"duration"`
@@ -384,13 +390,13 @@ func (c *BilibiliClient) GetVideoInfo(bvid string) (*models.Video, error) {
 	}
 
 	return &models.Video{
-		Bvid:      result.Data.Bvid,
-		Title:     result.Data.Title,
-		Desc:      result.Data.Desc,
-		Author:    result.Data.Owner.Name,
+		Bvid:     result.Data.Bvid,
+		Title:    result.Data.Title,
+		Desc:     result.Data.Desc,
+		Author:   result.Data.Owner.Name,
 		AuthorMid: strconv.FormatInt(result.Data.Owner.Mid, 10),
-		Duration:  result.Data.Duration,
-		PubDate:   time.Unix(result.Data.PubDate, 0),
+		Duration: result.Data.Duration,
+		PubDate:  time.Unix(result.Data.PubDate, 0),
 	}, nil
 }
 
@@ -435,9 +441,9 @@ func (c *BilibiliClient) ValidateCookie() error {
 		Message string `json:"message"`
 		TTL     int    `json:"ttl"`
 		Data    struct {
-			Uname   string `json:"uname"`   // 用户名
-			IsLogin bool   `json:"isLogin"` // 是否登录
-			Level   int    `json:"level"`   // 账号等级
+			Uname    string `json:"uname"`    // 用户名
+			IsLogin  bool   `json:"isLogin"`  // 是否登录
+			Level    int    `json:"level"`     // 账号等级
 		} `json:"data"`
 	}
 

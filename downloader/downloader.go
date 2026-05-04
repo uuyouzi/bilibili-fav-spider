@@ -118,7 +118,7 @@ func (d *Downloader) Download(video *models.Video, cookie string, favoriteFolder
 		saveDir = filepath.Join(
 			d.config.SavePath,
 			sanitizeFilename(video.FavoriteTitle), // 收藏夹名称
-			sanitizeFilename(video.Author),        // UP主名称
+			sanitizeFilename(video.Author),       // UP主名称
 		)
 	} else {
 		saveDir = filepath.Join(
@@ -139,10 +139,10 @@ func (d *Downloader) Download(video *models.Video, cookie string, favoriteFolder
 	// 构建 yt-dlp 命令行参数
 	args := []string{
 		"--format", d.config.Quality, // 视频质量
-		"-o", saveTemplate, // 保存路径模板
-		"--no-playlist", // 不下载整个播放列表（只下载单个视频）
-		"--no-warnings", // 不显示警告
-		"-v",            // 显示详细输出
+		"-o", saveTemplate,          // 保存路径模板
+		"--no-playlist",             // 不下载整个播放列表（只下载单个视频）
+		"--no-warnings",             // 不显示警告
+		"-v",                        // 显示详细输出
 	}
 
 	// 添加 Cookie（如果有）

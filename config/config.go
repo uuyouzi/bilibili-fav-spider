@@ -55,9 +55,12 @@ func Load(path string) (*models.Config, error) {
 
 // validate 校验配置项的合法性
 func validate(cfg *models.Config) error {
-	// Cookie 为可选，不填则启动时自动走扫码登录
-	if cfg.Cookie == "" {
-		log.Println("配置中未设置 Cookie，将在启动时启动扫码登录")
+	// 登录方式校验
+	if cfg.UID != "" {
+		// 使用 UID 模式：抓取指定用户的公开收藏夹，无需登录
+		log.Printf("使用 UID 模式，将抓取用户 %s 的公开收藏夹", cfg.UID)
+	} else if cfg.Cookie == "" {
+		log.Println("配置中未设置 Cookie 和 UID，将在启动时启动扫码登录")
 	}
 
 	// 检查保存路径是否设置
