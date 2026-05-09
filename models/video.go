@@ -23,6 +23,7 @@ type Video struct {
 	Bvid          string      `json:"bvid"`           // B站视频的唯一标识符（如 BV1xx4y1d7z9）
 	Title         string      `json:"title"`          // 视频标题
 	Desc         string      `json:"desc"`           // 视频简介
+	CoverURL     string      `json:"cover_url"`     // 封面图 URL
 	Author        string      `json:"author"`         // UP主名称
 	AuthorMid     string      `json:"author_mid"`     // UP主mid
 	Duration      int         `json:"duration"`       // 视频时长（秒）

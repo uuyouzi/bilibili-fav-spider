@@ -62,6 +62,7 @@ func (s *Storage) initTables() error {
 		save_path       TEXT    DEFAULT '',
 		error_msg       TEXT    DEFAULT '',
 		retries         INTEGER DEFAULT 0,
+		cover_url       TEXT    DEFAULT '',
 		created_at      TEXT    NOT NULL,
 		updated_at      TEXT    NOT NULL
 	);
@@ -100,6 +101,16 @@ func (s *Storage) migrateAddFavoriteFields() {
 			log.Printf("添加 favorite_title 字段失败: %v", err)
 		}
 	}
+	// 迁移：添加 cover_url 列（旧数据库可能没有此列）
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('videos') WHERE name='cover_url'").Scan(&count); err != nil {
+		log.Printf("检查 cover_url 字段失败: %v，跳过迁移", err)
+		return
+	}
+	if count == 0 {
+		if _, err := s.db.Exec("ALTER TABLE videos ADD COLUMN cover_url TEXT DEFAULT ''"); err != nil {
+			log.Printf("添加 cover_url 字段失败: %v", err)
+		}
+	}
 }
 
 func (s *Storage) Close() error {
@@ -116,8 +127,8 @@ func (s *Storage) AddVideo(video *models.Video) error {
 	INSERT OR IGNORE INTO videos (
 		bvid, title, desc, author, author_mid, duration,
 		pub_date, favorite_time, favorite_id, favorite_title,
-		status, save_path, error_msg, retries, created_at, updated_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		status, save_path, error_msg, retries, cover_url, created_at, updated_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	result, err := s.db.Exec(sqlStr,
@@ -135,6 +146,7 @@ func (s *Storage) AddVideo(video *models.Video) error {
 		video.SavePath,
 		video.ErrorMsg,
 		video.Retries,
+		video.CoverURL,
 		now,
 		now,
 	)
@@ -155,7 +167,7 @@ func (s *Storage) GetVideoByBvid(bvid string) (*models.Video, error) {
 	sqlStr := `
 	SELECT id, bvid, title, desc, author, author_mid, duration,
 	       pub_date, favorite_time, favorite_id, favorite_title,
-	       status, save_path, error_msg, retries, created_at, updated_at
+	       status, save_path, error_msg, retries, cover_url, created_at, updated_at
 	FROM videos WHERE bvid = ?
 	`
 
@@ -178,7 +190,7 @@ func (s *Storage) GetPendingVideos(limit int) ([]*models.Video, error) {
 	sqlStr := `
 	SELECT id, bvid, title, desc, author, author_mid, duration,
 	       pub_date, favorite_time, favorite_id, favorite_title,
-	       status, save_path, error_msg, retries, created_at, updated_at
+	       status, save_path, error_msg, retries, cover_url, created_at, updated_at
 	FROM videos
 	WHERE status IN ('pending', 'failed')
 	ORDER BY favorite_time ASC`
@@ -264,7 +276,8 @@ func scanVideo(row *sql.Row) (*models.Video, error) {
 	err := row.Scan(
 		&v.ID, &v.Bvid, &v.Title, &v.Desc, &v.Author, &v.AuthorMid, &v.Duration,
 		&pubDateStr, &favoriteTimeStr, &v.FavoriteId, &v.FavoriteTitle,
-		&v.Status, &v.SavePath, &v.ErrorMsg, &v.Retries, &createdAtStr, &updatedAtStr,
+		&v.Status, &v.SavePath, &v.ErrorMsg, &v.Retries, &v.CoverURL,
+		&createdAtStr, &updatedAtStr,
 	)
 	if err != nil {
 		return nil, err
@@ -301,7 +314,8 @@ func scanVideos(rows *sql.Rows) ([]*models.Video, error) {
 		err := rows.Scan(
 			&v.ID, &v.Bvid, &v.Title, &v.Desc, &v.Author, &v.AuthorMid, &v.Duration,
 			&pubDateStr, &favoriteTimeStr, &v.FavoriteId, &v.FavoriteTitle,
-			&v.Status, &v.SavePath, &v.ErrorMsg, &v.Retries, &createdAtStr, &updatedAtStr,
+			&v.Status, &v.SavePath, &v.ErrorMsg, &v.Retries, &v.CoverURL,
+			&createdAtStr, &updatedAtStr,
 		)
 		if err != nil {
 			return nil, err
@@ -387,7 +401,7 @@ func (s *Storage) SearchVideos(keyword string) ([]*models.Video, error) {
 	sqlStr := `
 	SELECT id, bvid, title, desc, author, author_mid, duration,
 	       pub_date, favorite_time, favorite_id, favorite_title,
-	       status, save_path, error_msg, retries, created_at, updated_at
+	       status, save_path, error_msg, retries, cover_url, created_at, updated_at
 	FROM videos
 	WHERE title LIKE ?
 	ORDER BY favorite_time DESC
@@ -406,7 +420,7 @@ func (s *Storage) GetFailedVideos() ([]*models.Video, error) {
 	sqlStr := `
 	SELECT id, bvid, title, desc, author, author_mid, duration,
 	       pub_date, favorite_time, favorite_id, favorite_title,
-	       status, save_path, error_msg, retries, created_at, updated_at
+	       status, save_path, error_msg, retries, cover_url, created_at, updated_at
 	FROM videos
 	WHERE status = 'failed'
 	ORDER BY favorite_time ASC
