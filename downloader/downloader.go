@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -110,22 +112,15 @@ func (d *Downloader) Download(video *models.Video, cookie string, favoriteFolder
 	// 构建视频 URL
 	videoURL := fmt.Sprintf("https://www.bilibili.com/video/%s", video.Bvid)
 
-	// 构建保存路径
-	// 如果启用收藏夹分类：{SavePath}/{收藏夹名称}/{UP主名称}/{视频标题}.{扩展名}
-	// 如果不启用：{SavePath}/{UP主名称}/{视频标题}.{扩展名}
+	// 构建保存路径：{SavePath}/{收藏夹名称}/{视频标题}/
 	var saveDir string
+	titleDir := sanitizeFilename(video.Title)
 	if favoriteFolders && video.FavoriteTitle != "" {
-		saveDir = filepath.Join(
-			d.config.SavePath,
-			sanitizeFilename(video.FavoriteTitle), // 收藏夹名称
-			sanitizeFilename(video.Author),       // UP主名称
-		)
+		saveDir = filepath.Join(d.config.SavePath, sanitizeFilename(video.FavoriteTitle), titleDir)
 	} else {
-		saveDir = filepath.Join(
-			d.config.SavePath,
-			sanitizeFilename(video.Author), // UP主名称
-		)
+		saveDir = filepath.Join(d.config.SavePath, titleDir)
 	}
+	saveDir = uniqueDirPath(saveDir)
 	saveTemplate := filepath.Join(saveDir, "%(title)s.%(ext)s")
 
 	// 确保保存目录存在
@@ -256,22 +251,17 @@ func (d *Downloader) findDownloadedFile(dir, title string) (string, error) {
 	return "", fmt.Errorf("在目录 %s 中未找到下载的文件", dir)
 }
 
-// SaveMetadata 仅保存视频元数据（标题、描述等）到 txt 文件
-// 不调用 yt-dlp，不下载视频文件本身
+// SaveMetadata 保存视频元数据和封面图到以视频标题命名的文件夹
 func (d *Downloader) SaveMetadata(video *models.Video, favoriteFolders bool) *DownloadResult {
+	// 目录结构：{savePath}/{收藏夹}/{视频标题}/
+	titleDir := sanitizeFilename(video.Title)
 	var saveDir string
 	if favoriteFolders && video.FavoriteTitle != "" {
-		saveDir = filepath.Join(
-			d.config.SavePath,
-			sanitizeFilename(video.FavoriteTitle),
-			sanitizeFilename(video.Author),
-		)
+		saveDir = filepath.Join(d.config.SavePath, sanitizeFilename(video.FavoriteTitle), titleDir)
 	} else {
-		saveDir = filepath.Join(
-			d.config.SavePath,
-			sanitizeFilename(video.Author),
-		)
+		saveDir = filepath.Join(d.config.SavePath, titleDir)
 	}
+	saveDir = uniqueDirPath(saveDir)
 
 	if err := os.MkdirAll(saveDir, 0755); err != nil {
 		return &DownloadResult{
@@ -280,10 +270,8 @@ func (d *Downloader) SaveMetadata(video *models.Video, favoriteFolders bool) *Do
 		}
 	}
 
-	// 确保文件名唯一，防止同名视频覆盖
-	savePath := filepath.Join(saveDir, sanitizeFilename(video.Title)+".txt")
-	savePath = uniqueFilePath(savePath)
-
+	// 1. 保存详情 txt
+	txtPath := filepath.Join(saveDir, "详情.txt")
 	content := fmt.Sprintf(`标题: %s
 BV号: %s
 UP主: %s (mid: %s)
@@ -291,6 +279,7 @@ UP主: %s (mid: %s)
 收藏时间: %s
 发布时间: %s
 时长: %s
+封面: %s
 链接: https://www.bilibili.com/video/%s
 描述:
 %s
@@ -302,22 +291,106 @@ UP主: %s (mid: %s)
 		video.FavoriteTime.Format("2006-01-02 15:04:05"),
 		video.PubDate.Format("2006-01-02 15:04:05"),
 		FormatDuration(video.Duration),
+		video.CoverURL,
 		video.Bvid,
 		video.Desc,
 	)
 
-	if err := os.WriteFile(savePath, []byte(content), 0644); err != nil {
+	if err := os.WriteFile(txtPath, []byte(content), 0644); err != nil {
 		return &DownloadResult{
 			Success:  false,
-			ErrorMsg: fmt.Sprintf("写入元数据文件失败: %v", err),
+			ErrorMsg: fmt.Sprintf("写入详情文件失败: %v", err),
 		}
 	}
 
-	log.Printf("元数据已保存: %s", savePath)
+	// 2. 下载封面图
+	if video.CoverURL != "" {
+		if err := downloadCover(video.CoverURL, filepath.Join(saveDir, "封面.jpg")); err != nil {
+			log.Printf("下载封面失败: %v", err)
+		}
+	}
+
+	log.Printf("元数据已保存: %s", saveDir)
 	return &DownloadResult{
 		Success:  true,
-		SavePath: savePath,
+		SavePath: saveDir,
 	}
+}
+
+// downloadCover 下载封面图片到本地
+// 带超时控制、Content-Type 校验和最多 3 次重试
+func downloadCover(url, savePath string) error {
+	// 从 URL 推断真实图片格式，避免固定 .jpg 后缀导致扩展名错误
+	ext := ".jpg"
+	if strings.HasSuffix(url, ".png") {
+		ext = ".png"
+	} else if strings.HasSuffix(url, ".webp") {
+		ext = ".webp"
+	} else if strings.HasSuffix(url, ".gif") {
+		ext = ".gif"
+	}
+	actualSavePath := strings.TrimSuffix(savePath, filepath.Ext(savePath)) + ext
+
+	// 使用带超时的独立 HTTP 客户端（不污染全局 DefaultClient）
+	client := &http.Client{Timeout: 30 * time.Second}
+
+	var lastErr error
+	for retry := 0; retry < 3; retry++ {
+		if retry > 0 {
+			log.Printf("封面下载重试第 %d 次: %s", retry, url)
+			time.Sleep(time.Duration(retry) * 2 * time.Second)
+		}
+
+		req, err := http.NewRequest("GET", url, nil)
+		if err != nil {
+			lastErr = fmt.Errorf("创建封面请求失败: %w", err)
+			continue
+		}
+		req.Header.Set("Referer", "https://www.bilibili.com")
+		req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+
+		resp, err := client.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("请求封面失败: %w", err)
+			continue
+		}
+
+		if resp.StatusCode != 200 {
+			resp.Body.Close()
+			lastErr = fmt.Errorf("封面返回 HTTP %d", resp.StatusCode)
+			continue
+		}
+
+		// 校验 Content-Type，确保响应确实是图片而非 HTML 错误页面
+		contentType := resp.Header.Get("Content-Type")
+		if contentType != "" && !strings.HasPrefix(contentType, "image/") {
+			resp.Body.Close()
+			lastErr = fmt.Errorf("封面响应 Content-Type 不是图片: %s", contentType)
+			continue
+		}
+
+		data, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			lastErr = fmt.Errorf("读取封面数据失败: %w", err)
+			continue
+		}
+
+		if len(data) == 0 {
+			lastErr = fmt.Errorf("封面数据为空")
+			continue
+		}
+
+		if err := os.WriteFile(actualSavePath, data, 0644); err != nil {
+			lastErr = fmt.Errorf("写入封面文件失败: %w", err)
+			continue
+		}
+
+		log.Printf("封面下载成功: %s (%d bytes)", actualSavePath, len(data))
+		return nil
+	}
+
+	return lastErr
 }
 
 // uniqueFilePath 如果目标路径已存在文件，在文件名后加 (N) 直到唯一
@@ -329,6 +402,19 @@ func uniqueFilePath(path string) string {
 	base := strings.TrimSuffix(path, ext)
 	for i := 2; ; i++ {
 		newPath := fmt.Sprintf("%s(%d)%s", base, i, ext)
+		if _, err := os.Stat(newPath); os.IsNotExist(err) {
+			return newPath
+		}
+	}
+}
+
+// uniqueDirPath 如果目标目录已存在，在目录名后加 (N) 直到唯一
+func uniqueDirPath(path string) string {
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return path
+	}
+	for i := 2; ; i++ {
+		newPath := fmt.Sprintf("%s(%d)", path, i)
 		if _, err := os.Stat(newPath); os.IsNotExist(err) {
 			return newPath
 		}

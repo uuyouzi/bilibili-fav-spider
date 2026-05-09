@@ -75,8 +75,6 @@ type FavoriteVideosResponse struct {
 			Bvid         string `json:"bvid"`          // 视频BV号
 			Title        string `json:"title"`         // 视频标题
 			Intro        string `json:"intro"`         // 视频简介
-			Cover        string `json:"cover"`         // 封面图 URL（可能为空）
-			Pic          string `json:"pic"`           // 封面图 URL 备选字段
 			Duration     int    `json:"duration"`       // 视频时长（秒）
 			PubTime      int64  `json:"pubtime"`       // 发布时间（Unix时间戳）
 			FavoriteTime int64  `json:"fav_time"`      // 收藏时间（Unix时间戳）
@@ -255,7 +253,6 @@ func (c *BilibiliClient) GetFavoriteVideos(mediaId int64, favoriteTitle string) 
 				Bvid:          item.Bvid,
 				Title:         item.Title,
 				Desc:          item.Intro,
-				CoverURL:      pickNonEmpty(item.Cover, item.Pic),
 				Author:        item.Upper.Name,
 				AuthorMid:     strconv.FormatInt(item.Upper.Mid, 10),
 				Duration:      item.Duration,
@@ -496,12 +493,4 @@ func ParseBvidFromURL(input string) (string, error) {
 	}
 
 	return "", fmt.Errorf("无法从输入中提取有效的 B站视频 BV 号")
-}
-
-// pickNonEmpty 返回第一个非空字符串
-func pickNonEmpty(a, b string) string {
-	if a != "" {
-		return a
-	}
-	return b
 }
