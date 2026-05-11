@@ -112,9 +112,9 @@ func (d *Downloader) Download(video *models.Video, cookie string, favoriteFolder
 	// 构建视频 URL
 	videoURL := fmt.Sprintf("https://www.bilibili.com/video/%s", video.Bvid)
 
-	// 构建保存路径：{SavePath}/{收藏夹名称}/{视频标题}/
+	// 构建保存路径：{SavePath}/{收藏夹名称}/{YYYY-MM-DD 视频标题}/
 	var saveDir string
-	titleDir := sanitizeFilename(video.Title)
+	titleDir := buildTitleDir(video)
 	if favoriteFolders && video.FavoriteTitle != "" {
 		saveDir = filepath.Join(d.config.SavePath, sanitizeFilename(video.FavoriteTitle), titleDir)
 	} else {
@@ -253,8 +253,8 @@ func (d *Downloader) findDownloadedFile(dir, title string) (string, error) {
 
 // SaveMetadata 保存视频元数据和封面图到以视频标题命名的文件夹
 func (d *Downloader) SaveMetadata(video *models.Video, favoriteFolders bool) *DownloadResult {
-	// 目录结构：{savePath}/{收藏夹}/{视频标题}/
-	titleDir := sanitizeFilename(video.Title)
+	// 目录结构：{savePath}/{收藏夹}/{YYYY-MM-DD 视频标题}/
+	titleDir := buildTitleDir(video)
 	var saveDir string
 	if favoriteFolders && video.FavoriteTitle != "" {
 		saveDir = filepath.Join(d.config.SavePath, sanitizeFilename(video.FavoriteTitle), titleDir)
@@ -270,8 +270,8 @@ func (d *Downloader) SaveMetadata(video *models.Video, favoriteFolders bool) *Do
 		}
 	}
 
-	// 1. 保存详情 txt
-	txtPath := filepath.Join(saveDir, "详情.txt")
+	// 1. 保存详情 txt（使用 1_ 前缀确保在 Windows 中排在封面之后）
+	txtPath := filepath.Join(saveDir, "1_details.txt")
 	content := fmt.Sprintf(`标题: %s
 BV号: %s
 UP主: %s (mid: %s)
@@ -303,9 +303,9 @@ UP主: %s (mid: %s)
 		}
 	}
 
-	// 2. 下载封面图
+	// 2. 下载封面图（使用 0_ 前缀确保在 Windows 中排在详情之前）
 	if video.CoverURL != "" {
-		if err := downloadCover(video.CoverURL, filepath.Join(saveDir, "封面.jpg")); err != nil {
+		if err := downloadCover(video.CoverURL, filepath.Join(saveDir, "0_cover.jpg")); err != nil {
 			log.Printf("下载封面失败: %v", err)
 		}
 	}
@@ -465,6 +465,18 @@ func sanitizedTitleContains(filename, title string) bool {
 	filename = re.ReplaceAllString(filename, "")
 
 	return strings.Contains(filename, title) || strings.Contains(title, filename)
+}
+
+// buildTitleDir 构建视频文件夹名称
+// 格式：YYYY-MM-DD 视频标题（收藏日期 + 视频标题）
+// 如果收藏时间为零值，则直接返回视频标题（不带日期前缀）
+func buildTitleDir(video *models.Video) string {
+	title := sanitizeFilename(video.Title)
+	if !video.FavoriteTime.IsZero() {
+		datePrefix := video.FavoriteTime.Format("2006-01-02")
+		return datePrefix + " " + title
+	}
+	return title
 }
 
 // sanitizeFilename 清理文件名，移除非法字符
